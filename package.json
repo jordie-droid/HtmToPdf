@@ -1,0 +1,22 @@
+{
+  "name": "htmltopdf",
+  "version": "1.0.0",
+  "description": "Service Node.js de conversion HTML vers PDF avec Playwright",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node src/server.js",
+    "dev": "node src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^18.0.2",
+    "express": "^5.2.1",
+    "multer": "^2.4.0",
+    "playwright": "^1.63.0"
+  },
+  "devDependencies": {}
+}
