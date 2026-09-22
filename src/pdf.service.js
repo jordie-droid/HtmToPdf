@@ -1,123 +1,256 @@
-const {
-    chromium: playwright
-} = require("playwright-core");
+"use strict";
 
-const {
-    pathToFileURL
-} = require("url");
+/**
+ * ============================================================================
+ * PDF SERVICE
+ * ============================================================================
+ *
+ * Compatible :
+ *   - Windows en local
+ *   - Vercel / Serverless Linux
+ *
+ * Local :
+ *   playwright-core + Chromium installé localement
+ *
+ * Vercel :
+ *   playwright-core + @sparticuz/chromium
+ *
+ * Le PDF est généré EN MÉMOIRE.
+ * Aucun fichier PDF n'est créé sur le disque.
+ * ============================================================================
+ */
 
-const os = require("os");
-const path = require("path");
 const fs = require("fs");
+const path = require("path");
+const { pathToFileURL } = require("url");
 
-/*
-|--------------------------------------------------------------------------
-| Configuration
-|--------------------------------------------------------------------------
-*/
+const { chromium: playwright } = require("playwright-core");
 
-const PAGE_TIMEOUT =
-    Number(process.env.PAGE_TIMEOUT) || 120000;
 
-/*
-|--------------------------------------------------------------------------
-| Browser
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// VARIABLES
+// ============================================================================
 
 let browser = null;
 
-/*
-|--------------------------------------------------------------------------
-| Chromium Sparticuz
-|--------------------------------------------------------------------------
-*/
-
 let sparticuzChromium = null;
 
-/*
-|--------------------------------------------------------------------------
-| Détection environnement
-|--------------------------------------------------------------------------
-*/
+let chromiumLoadingPromise = null;
+
+
+// ============================================================================
+// DÉTECTION ENVIRONNEMENT
+// ============================================================================
 
 const IS_VERCEL =
-    Boolean(process.env.VERCEL);
+    process.env.VERCEL === "1" ||
+    !!process.env.VERCEL_ENV;
 
 const IS_WINDOWS =
     process.platform === "win32";
 
-const IS_LOCAL =
-    !IS_VERCEL && IS_WINDOWS;
 
-/*
-|--------------------------------------------------------------------------
-| Chargement dynamique de @sparticuz/chromium
-|--------------------------------------------------------------------------
-|
-| IMPORTANT :
-| @sparticuz/chromium est ESM.
-|
-| Notre projet reste en CommonJS.
-|
-| On utilise donc import() au lieu de require().
-|
-|--------------------------------------------------------------------------
-*/
+// ============================================================================
+// LOG
+// ============================================================================
+
+function log(...args) {
+    console.log("[PDF SERVICE]", ...args);
+}
+
+
+// ============================================================================
+// CHARGEMENT @SPARTICUZ/CHROMIUM
+// ============================================================================
 
 async function getSparticuzChromium() {
 
-    if (
-        sparticuzChromium
-    ) {
+    if (sparticuzChromium) {
         return sparticuzChromium;
     }
 
-    console.log(
-        "Chargement de @sparticuz/chromium..."
-    );
+    if (chromiumLoadingPromise) {
+        return chromiumLoadingPromise;
+    }
 
-    const module =
-        await import("@sparticuz/chromium");
+    chromiumLoadingPromise = (async () => {
 
-    /*
-    |--------------------------------------------------------------------------
-    | Selon la version du package, l'export peut être default
-    | ou directement exposé.
-    |--------------------------------------------------------------------------
-    */
+        try {
 
-    sparticuzChromium =
-        module.default || module;
+            log("Chargement de @sparticuz/chromium...");
 
-    console.log(
-        "@sparticuz/chromium chargé."
-    );
+            /*
+             * @sparticuz/chromium peut être chargé comme module ESM
+             * selon la version installée.
+             *
+             * On utilise donc import() dynamiquement.
+             */
+            const module = await import("@sparticuz/chromium");
 
-    return sparticuzChromium;
+            sparticuzChromium =
+                module.default ||
+                module;
+
+            log("@sparticuz/chromium chargé.");
+
+            return sparticuzChromium;
+
+        } catch (error) {
+
+            console.error(
+                "Impossible de charger @sparticuz/chromium :",
+                error
+            );
+
+            throw new Error(
+                `Impossible de charger @sparticuz/chromium : ${error.message}`
+            );
+        }
+
+    })();
+
+    return chromiumLoadingPromise;
 }
 
-/*
-|--------------------------------------------------------------------------
-| Recherche Chromium local Windows
-|--------------------------------------------------------------------------
-*/
 
-function findLocalChromium() {
+// ============================================================================
+// RECHERCHE CHROMIUM LOCAL WINDOWS
+// ============================================================================
 
-    const possibleRoots = [];
+function findLocalChromiumExecutable() {
+
+    const candidates = [];
 
     /*
-    |--------------------------------------------------------------------------
-    | LOCALAPPDATA
-    |--------------------------------------------------------------------------
-    */
+     * ------------------------------------------------------------------------
+     * 1. PLAYWRIGHT_BROWSERS_PATH
+     * ------------------------------------------------------------------------
+     */
 
-    if (
-        process.env.LOCALAPPDATA
-    ) {
+    if (process.env.PLAYWRIGHT_BROWSERS_PATH) {
 
-        possibleRoots.push(
+        const browsersPath =
+            process.env.PLAYWRIGHT_BROWSERS_PATH;
+
+        candidates.push(
+            path.join(
+                browsersPath,
+                "chromium-*",
+                "chrome-win",
+                "chrome.exe"
+            )
+        );
+
+        candidates.push(
+            path.join(
+                browsersPath,
+                "chromium_headless_shell-*",
+                "chrome-headless-shell-win64",
+                "chrome-headless-shell.exe"
+            )
+        );
+    }
+
+
+    /*
+     * ------------------------------------------------------------------------
+     * 2. LOCALAPPDATA
+     * ------------------------------------------------------------------------
+     */
+
+    if (process.env.LOCALAPPDATA) {
+
+        const msPlaywright =
+            path.join(
+                process.env.LOCALAPPDATA,
+                "ms-playwright"
+            );
+
+        candidates.push(
+            path.join(
+                msPlaywright,
+                "chromium-*",
+                "chrome-win",
+                "chrome.exe"
+            )
+        );
+
+        candidates.push(
+            path.join(
+                msPlaywright,
+                "chromium_headless_shell-*",
+                "chrome-headless-shell-win64",
+                "chrome-headless-shell.exe"
+            )
+        );
+    }
+
+
+    /*
+     * ------------------------------------------------------------------------
+     * 3. USERPROFILE
+     * ------------------------------------------------------------------------
+     */
+
+    if (process.env.USERPROFILE) {
+
+        const msPlaywright =
+            path.join(
+                process.env.USERPROFILE,
+                "AppData",
+                "Local",
+                "ms-playwright"
+            );
+
+        candidates.push(
+            path.join(
+                msPlaywright,
+                "chromium-*",
+                "chrome-win",
+                "chrome.exe"
+            )
+        );
+
+        candidates.push(
+            path.join(
+                msPlaywright,
+                "chromium_headless_shell-*",
+                "chrome-headless-shell-win64",
+                "chrome-headless-shell.exe"
+            )
+        );
+    }
+
+
+    /*
+     * ------------------------------------------------------------------------
+     * 4. CHEMINS POSSIBLES DANS NODE_MODULES
+     * ------------------------------------------------------------------------
+     */
+
+    candidates.push(
+        path.join(
+            process.cwd(),
+            "node_modules",
+            "playwright-core",
+            ".local-browsers",
+            "chromium",
+            "chrome-win",
+            "chrome.exe"
+        )
+    );
+
+
+    /*
+     * ------------------------------------------------------------------------
+     * Recherche récursive contrôlée
+     * ------------------------------------------------------------------------
+     */
+
+    const roots = [];
+
+    if (process.env.LOCALAPPDATA) {
+        roots.push(
             path.join(
                 process.env.LOCALAPPDATA,
                 "ms-playwright"
@@ -125,17 +258,8 @@ function findLocalChromium() {
         );
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | USERPROFILE
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-        process.env.USERPROFILE
-    ) {
-
-        possibleRoots.push(
+    if (process.env.USERPROFILE) {
+        roots.push(
             path.join(
                 process.env.USERPROFILE,
                 "AppData",
@@ -145,770 +269,748 @@ function findLocalChromium() {
         );
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | HOME
-    |--------------------------------------------------------------------------
-    */
-
-    const home =
-        os.homedir();
-
-    possibleRoots.push(
-        path.join(
-            home,
-            "AppData",
-            "Local",
-            "ms-playwright"
-        )
-    );
 
     /*
-    |--------------------------------------------------------------------------
-    | Recherche
-    |--------------------------------------------------------------------------
-    */
+     * Cherche directement dans les dossiers chromium-*
+     */
+    for (const root of roots) {
 
-    for (
-        const root of possibleRoots
-    ) {
-
-        if (
-            !fs.existsSync(root)
-        ) {
+        if (!fs.existsSync(root)) {
             continue;
         }
 
-        const executable =
-            findChromiumExecutable(
-                root
-            );
+        let entries;
 
-        if (
-            executable
-        ) {
-
-            return executable;
+        try {
+            entries = fs.readdirSync(root);
+        } catch {
+            continue;
         }
-    }
 
-    return null;
-}
-
-/*
-|--------------------------------------------------------------------------
-| Recherche récursive chrome.exe / chrome
-|--------------------------------------------------------------------------
-*/
-
-function findChromiumExecutable(
-    root
-) {
-
-    try {
-
-        const entries =
-            fs.readdirSync(
-                root,
-                {
-                    withFileTypes: true
-                }
-            );
-
-        for (
-            const entry of entries
-        ) {
-
-            const fullPath =
-                path.join(
-                    root,
-                    entry.name
-                );
+        for (const entry of entries) {
 
             if (
-                entry.isDirectory()
+                !entry.startsWith("chromium-") &&
+                !entry.startsWith("chromium_headless_shell-")
             ) {
+                continue;
+            }
 
-                const result =
-                    findChromiumExecutable(
-                        fullPath
-                    );
+            const folder =
+                path.join(root, entry);
 
-                if (
-                    result
-                ) {
 
-                    return result;
-                }
+            /*
+             * Chromium classique
+             */
+            const chromeExe =
+                path.join(
+                    folder,
+                    "chrome-win",
+                    "chrome.exe"
+                );
 
-            } else {
+            if (fs.existsSync(chromeExe)) {
+                return chromeExe;
+            }
 
-                /*
-                |--------------------------------------------------------------------------
-                | Windows
-                |--------------------------------------------------------------------------
-                */
 
-                if (
-                    process.platform ===
-                    "win32"
-                ) {
+            /*
+             * Chromium headless shell
+             */
+            const headlessExe =
+                path.join(
+                    folder,
+                    "chrome-headless-shell-win64",
+                    "chrome-headless-shell.exe"
+                );
 
-                    if (
-                        entry.name ===
-                        "chrome.exe"
-                    ) {
-
-                        return fullPath;
-                    }
-                }
-
-                /*
-                |--------------------------------------------------------------------------
-                | Linux
-                |--------------------------------------------------------------------------
-                */
-
-                else {
-
-                    if (
-                        entry.name ===
-                        "chrome" ||
-                        entry.name ===
-                        "chrome-headless-shell"
-                    ) {
-
-                        return fullPath;
-                    }
-                }
+            if (fs.existsSync(headlessExe)) {
+                return headlessExe;
             }
         }
-
-    } catch (error) {
-
-        return null;
     }
+
+
+    /*
+     * Vérification des chemins explicites
+     */
+    for (const candidate of candidates) {
+
+        /*
+         * Les chemins avec * ne peuvent pas être testés directement.
+         */
+        if (candidate.includes("*")) {
+            continue;
+        }
+
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
 
     return null;
 }
 
-/*
-|--------------------------------------------------------------------------
-| Démarrage Chromium
-|--------------------------------------------------------------------------
-*/
+
+// ============================================================================
+// OUVERTURE DU NAVIGATEUR
+// ============================================================================
 
 async function getBrowser() {
 
     /*
-    |--------------------------------------------------------------------------
-    | Réutiliser le navigateur
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-        browser
-    ) {
+     * Si le navigateur existe déjà,
+     * on le réutilise.
+     */
+    if (browser) {
 
         try {
 
-            if (
-                browser.isConnected()
-            ) {
-
+            if (browser.isConnected()) {
                 return browser;
             }
 
-        } catch (error) {
-
-            console.warn(
-                "Navigateur existant inutilisable."
-            );
+        } catch {
+            // On recréera le navigateur.
         }
 
         browser = null;
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | LOCAL WINDOWS
-    |--------------------------------------------------------------------------
-    */
 
-    if (
-        IS_LOCAL
-    ) {
+    // ========================================================================
+    // VERCEL
+    // ========================================================================
 
+    if (IS_VERCEL) {
+
+        console.log("========================================");
+        console.log("Environnement : VERCEL / SERVERLESS");
+        console.log("========================================");
+
+
+        const chromium =
+            await getSparticuzChromium();
+
+
+        /*
+         * Désactivation du mode graphique.
+         *
+         * @sparticuz/chromium expose setGraphicsMode
+         * sur certaines versions.
+         */
+        try {
+
+            if (
+                typeof chromium.setGraphicsMode === "function"
+            ) {
+                chromium.setGraphicsMode = false;
+            }
+
+        } catch (error) {
+
+            console.warn(
+                "Impossible de modifier le mode graphique :",
+                error.message
+            );
+        }
+
+
+        /*
+         * Récupération du chemin du Chromium serverless.
+         */
         console.log(
-            "========================================"
-        );
-
-        console.log(
-            "Environnement : LOCAL WINDOWS"
-        );
-
-        console.log(
-            "Recherche de Chromium..."
+            "Récupération du chemin Chromium..."
         );
 
         const executablePath =
-            findLocalChromium();
+            await chromium.executablePath();
 
-        if (
-            !executablePath
-        ) {
+        console.log(
+            `Chromium serverless : ${executablePath}`
+        );
+
+
+        /*
+         * IMPORTANT
+         * --------------------------------------------------------------------
+         *
+         * NE PAS ajouter :
+         *
+         *   --user-data-dir
+         *
+         * et NE PAS utiliser :
+         *
+         *   userDataDir
+         *
+         * avec browserType.launch().
+         *
+         * Playwright interdit cette combinaison.
+         *
+         * C'était précisément l'erreur rencontrée sur Vercel.
+         * --------------------------------------------------------------------
+         */
+
+        console.log(
+            "Démarrage de Chromium serverless..."
+        );
+
+
+        browser =
+            await playwright.launch({
+
+                executablePath,
+
+                args: [
+                    ...(chromium.args || [])
+                ],
+
+                headless: true
+            });
+
+
+        console.log(
+            "Chromium serverless démarré."
+        );
+
+
+        return browser;
+    }
+
+
+    // ========================================================================
+    // LOCAL WINDOWS
+    // ========================================================================
+
+    if (IS_WINDOWS) {
+
+        console.log("========================================");
+        console.log("Environnement : WINDOWS LOCAL");
+        console.log("========================================");
+
+
+        /*
+         * Recherche du navigateur Playwright.
+         */
+        const executablePath =
+            findLocalChromiumExecutable();
+
+
+        if (!executablePath) {
 
             throw new Error(
-                [
-                    "Chromium local introuvable.",
-                    "",
-                    "Exécute :",
-                    "npx playwright-core install chromium"
-                ].join("\n")
+                "Chromium introuvable sur Windows. " +
+                "Exécutez : npx playwright-core install chromium"
             );
         }
+
 
         console.log(
             `Chromium local : ${executablePath}`
         );
 
-        console.log(
-            "Démarrage de Chromium..."
-        );
 
         browser =
             await playwright.launch({
 
-                headless: true,
-
                 executablePath,
+
+                headless: true,
 
                 args: [
                     "--no-sandbox",
-                    "--disable-setuid-sandbox"
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu"
                 ]
             });
+
 
         console.log(
             "Chromium local démarré."
         );
 
+
         return browser;
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | VERCEL / LINUX
-    |--------------------------------------------------------------------------
-    */
+
+    // ========================================================================
+    // AUTRE LINUX / ENVIRONNEMENT
+    // ========================================================================
 
     console.log(
-        "========================================"
+        "Environnement Linux / autre"
     );
 
-    console.log(
-        "Environnement : VERCEL / SERVERLESS"
-    );
 
     /*
-    |--------------------------------------------------------------------------
-    | Chargement Sparticuz
-    |--------------------------------------------------------------------------
-    */
+     * Tentative de recherche locale.
+     */
+    let executablePath =
+        findLocalChromiumExecutable();
 
-    const chromium =
-        await getSparticuzChromium();
 
     /*
-    |--------------------------------------------------------------------------
-    | Mode graphique
-    |--------------------------------------------------------------------------
-    */
+     * Si aucun Chromium local n'est trouvé,
+     * on tente @sparticuz/chromium.
+     */
+    if (!executablePath) {
 
-    try {
+        try {
 
-        chromium.setGraphicsMode =
-            false;
+            const chromium =
+                await getSparticuzChromium();
 
-    } catch (error) {
+            executablePath =
+                await chromium.executablePath();
 
-        console.warn(
-            "Impossible de modifier le mode graphique :",
-            error.message
+            console.log(
+                `Chromium trouvé via @sparticuz/chromium : ${executablePath}`
+            );
+
+            browser =
+                await playwright.launch({
+
+                    executablePath,
+
+                    args: [
+                        ...(chromium.args || [])
+                    ],
+
+                    headless: true
+                });
+
+            return browser;
+
+        } catch (error) {
+
+            console.warn(
+                "Impossible d'utiliser @sparticuz/chromium :",
+                error.message
+            );
+        }
+    }
+
+
+    /*
+     * Dernière tentative.
+     */
+    if (!executablePath) {
+
+        throw new Error(
+            "Impossible de trouver Chromium dans cet environnement."
         );
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Chemin Chromium
-    |--------------------------------------------------------------------------
-    */
-
-    console.log(
-        "Récupération du chemin Chromium..."
-    );
-
-    const executablePath =
-        await chromium.executablePath();
-
-    console.log(
-        `Chromium serverless : ${executablePath}`
-    );
-
-    /*
-    |--------------------------------------------------------------------------
-    | Dossier temporaire Chromium
-    |--------------------------------------------------------------------------
-    */
-
-    const userDataDir =
-        path.join(
-            "/tmp",
-            `playwright-${Date.now()}-${Math.random()
-                .toString(36)
-                .slice(2)}`
-        );
-
-    await fs.promises.mkdir(
-        userDataDir,
-        {
-            recursive: true
-        }
-    );
-
-    /*
-    |--------------------------------------------------------------------------
-    | Démarrage
-    |--------------------------------------------------------------------------
-    */
-
-    console.log(
-        "Démarrage de Chromium serverless..."
-    );
 
     browser =
         await playwright.launch({
 
             executablePath,
 
+            headless: true,
+
             args: [
-                ...chromium.args,
-
-                `--user-data-dir=${userDataDir}`
-            ],
-
-            headless: true
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu"
+            ]
         });
 
-    console.log(
-        "Chromium serverless démarré."
-    );
-
-    /*
-    |--------------------------------------------------------------------------
-    | Nettoyage
-    |--------------------------------------------------------------------------
-    */
-
-    browser.on(
-        "disconnected",
-        async () => {
-
-            try {
-
-                await fs.promises.rm(
-                    userDataDir,
-                    {
-                        recursive: true,
-                        force: true
-                    }
-                );
-
-            } catch (error) {
-
-                console.warn(
-                    "Impossible de supprimer le profil Chromium :",
-                    error.message
-                );
-            }
-        }
-    );
 
     return browser;
 }
 
-/*
-|--------------------------------------------------------------------------
-| HTML → PDF
-|--------------------------------------------------------------------------
-*/
 
-async function htmlFileToPdf(
-    htmlFilePath
-) {
+// ============================================================================
+// ATTENTE DES IMAGES
+// ============================================================================
 
-    /*
-    |--------------------------------------------------------------------------
-    | Vérification fichier
-    |--------------------------------------------------------------------------
-    */
+async function waitForImages(page) {
 
-    if (
-        !htmlFilePath
-    ) {
+    await page.evaluate(async () => {
+
+        const images =
+            Array.from(
+                document.images
+            );
+
+        await Promise.all(
+
+            images.map((img) => {
+
+                /*
+                 * Image déjà chargée.
+                 */
+                if (img.complete) {
+
+                    /*
+                     * Même si naturalWidth = 0,
+                     * on ne bloque pas indéfiniment.
+                     */
+                    return Promise.resolve();
+                }
+
+
+                return new Promise((resolve) => {
+
+                    let finished = false;
+
+
+                    const done = () => {
+
+                        if (finished) {
+                            return;
+                        }
+
+                        finished = true;
+
+                        resolve();
+                    };
+
+
+                    img.addEventListener(
+                        "load",
+                        done,
+                        {
+                            once: true
+                        }
+                    );
+
+                    img.addEventListener(
+                        "error",
+                        done,
+                        {
+                            once: true
+                        }
+                    );
+
+
+                    /*
+                     * Sécurité :
+                     * une image qui ne répond jamais ne doit pas
+                     * bloquer toute la génération.
+                     */
+                    setTimeout(
+                        done,
+                        15000
+                    );
+                });
+            })
+        );
+    });
+}
+
+
+// ============================================================================
+// ATTENTE DES POLICES
+// ============================================================================
+
+async function waitForFonts(page) {
+
+    try {
+
+        await page.evaluate(async () => {
+
+            if (
+                document.fonts &&
+                document.fonts.ready
+            ) {
+
+                await document.fonts.ready;
+            }
+        });
+
+    } catch (error) {
+
+        console.warn(
+            "Impossible d'attendre les polices :",
+            error.message
+        );
+    }
+}
+
+
+// ============================================================================
+// CONVERSION HTML → PDF
+// ============================================================================
+
+async function htmlFileToPdf(htmlFilePath) {
+
+    if (!htmlFilePath) {
 
         throw new Error(
             "Le chemin du fichier HTML est obligatoire."
         );
     }
 
-    if (
-        !fs.existsSync(
-            htmlFilePath
-        )
-    ) {
+
+    if (!fs.existsSync(htmlFilePath)) {
 
         throw new Error(
-            `Le fichier HTML n'existe pas : ${htmlFilePath}`
+            `Fichier HTML introuvable : ${htmlFilePath}`
         );
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Browser
-    |--------------------------------------------------------------------------
-    */
 
-    const browserInstance =
-        await getBrowser();
+    console.log(
+        "========================================"
+    );
 
-    /*
-    |--------------------------------------------------------------------------
-    | Context
-    |--------------------------------------------------------------------------
-    */
+    console.log(
+        "Début de la conversion HTML → PDF..."
+    );
 
-    const context =
-        await browserInstance.newContext({
+    console.log(
+        `Fichier HTML : ${htmlFilePath}`
+    );
 
-            viewport: {
-                width: 1280,
-                height: 720
-            },
 
-            javaScriptEnabled: true
-        });
+    let page = null;
 
-    /*
-    |--------------------------------------------------------------------------
-    | Page
-    |--------------------------------------------------------------------------
-    */
-
-    const page =
-        await context.newPage();
 
     try {
 
+        // ====================================================================
+        // NAVIGATEUR
+        // ====================================================================
+
+        const currentBrowser =
+            await getBrowser();
+
+
+        // ====================================================================
+        // NOUVELLE PAGE
+        // ====================================================================
+
+        page =
+            await currentBrowser.newPage();
+
+
+        // ====================================================================
+        // CONFIGURATION
+        // ====================================================================
+
         /*
-        |--------------------------------------------------------------------------
-        | Timeouts
-        |--------------------------------------------------------------------------
-        */
+         * Viewport suffisamment large pour les documents HTML.
+         */
+        await page.setViewportSize({
 
-        page.setDefaultTimeout(
-            PAGE_TIMEOUT
-        );
+            width: 1600,
 
-        page.setDefaultNavigationTimeout(
-            PAGE_TIMEOUT
-        );
+            height: 1200
+        });
+
 
         /*
-        |--------------------------------------------------------------------------
-        | URL du fichier
-        |--------------------------------------------------------------------------
-        */
+         * Désactive certaines animations afin d'obtenir
+         * un PDF stable.
+         */
+        await page.addStyleTag({
+
+            content: `
+                *,
+                *::before,
+                *::after {
+                    animation-delay: 0s !important;
+                    animation-duration: 0s !important;
+                    animation-iteration-count: 1 !important;
+                    transition-duration: 0s !important;
+                    transition-delay: 0s !important;
+                }
+            `
+        });
+
+
+        // ====================================================================
+        // CHARGEMENT DU FICHIER HTML
+        // ====================================================================
 
         const fileUrl =
             pathToFileURL(
                 htmlFilePath
             ).href;
 
+
         console.log(
             `Chargement : ${fileUrl}`
         );
 
-        /*
-        |--------------------------------------------------------------------------
-        | Chargement
-        |--------------------------------------------------------------------------
-        */
 
         await page.goto(
+
             fileUrl,
+
             {
-                waitUntil: "networkidle",
-                timeout: PAGE_TIMEOUT
+                waitUntil: "load",
+
+                timeout: 120000
             }
         );
 
-        /*
-        |--------------------------------------------------------------------------
-        | Fonts
-        |--------------------------------------------------------------------------
-        */
 
-        await page.evaluate(
-            async () => {
-
-                if (
-                    document.fonts
-                ) {
-
-                    await document.fonts.ready;
-                }
-            }
-        );
-
-        /*
-        |--------------------------------------------------------------------------
-        | Images
-        |--------------------------------------------------------------------------
-        */
-
-        await page.evaluate(
-            async () => {
-
-                const images =
-                    Array.from(
-                        document.images
-                    );
-
-                await Promise.all(
-                    images.map(
-                        img => {
-
-                            if (
-                                img.complete
-                            ) {
-
-                                return Promise.resolve();
-                            }
-
-                            return new Promise(
-                                resolve => {
-
-                                    img.onload =
-                                        resolve;
-
-                                    img.onerror =
-                                        resolve;
-                                }
-                            );
-                        }
-                    )
-                );
-            }
-        );
-
-        /*
-        |--------------------------------------------------------------------------
-        | Stabilisation
-        |--------------------------------------------------------------------------
-        */
-
-        await page.waitForTimeout(
-            100
-        );
-
-        /*
-        |--------------------------------------------------------------------------
-        | Diagnostic
-        |--------------------------------------------------------------------------
-        */
-
-        const pageInfo =
-            await page.evaluate(
-                () => ({
-
-                    title:
-                        document.title,
-
-                    width:
-                        document.documentElement
-                            .scrollWidth,
-
-                    height:
-                        document.documentElement
-                            .scrollHeight,
-
-                    images:
-                        document.images.length,
-
-                    bodyLength:
-                        document.body
-                            ? document.body.innerHTML.length
-                            : 0
-                })
-            );
+        // ====================================================================
+        // ATTENTE DES IMAGES
+        // ====================================================================
 
         console.log(
-            "Informations page :",
-            pageInfo
+            "Attente des images..."
         );
 
-        /*
-        |--------------------------------------------------------------------------
-        | PDF
-        |--------------------------------------------------------------------------
-        */
+        await waitForImages(page);
+
+
+        // ====================================================================
+        // ATTENTE DES POLICES
+        // ====================================================================
+
+        console.log(
+            "Attente des polices..."
+        );
+
+        await waitForFonts(page);
+
+
+        // ====================================================================
+        // PETIT DÉLAI DE STABILISATION
+        // ====================================================================
+
+        await page.waitForTimeout(300);
+
+
+        // ====================================================================
+        // PDF
+        // ====================================================================
 
         console.log(
             "Génération du PDF..."
         );
 
+
+        /*
+         * IMPORTANT :
+         *
+         * Aucun `path` ici.
+         *
+         * page.pdf() retourne directement un Buffer.
+         *
+         * Donc :
+         *
+         * HTML → Chromium → Buffer PDF → HTTP response
+         *
+         * Aucun PDF temporaire n'est créé.
+         */
         const pdfBuffer =
             await page.pdf({
 
-                format:
-                    process.env.PDF_FORMAT ||
-                    "A4",
+                format: "A4",
 
-                printBackground:
-                    true,
+                printBackground: true,
 
-                preferCSSPageSize:
-                    true,
+                preferCSSPageSize: true,
+
+                displayHeaderFooter: false,
 
                 margin: {
-
-                    top:
-                        process.env.PDF_MARGIN_TOP ||
-                        "0",
-
-                    right:
-                        process.env.PDF_MARGIN_RIGHT ||
-                        "0",
-
-                    bottom:
-                        process.env.PDF_MARGIN_BOTTOM ||
-                        "0",
-
-                    left:
-                        process.env.PDF_MARGIN_LEFT ||
-                        "0"
-                },
-
-                displayHeaderFooter:
-                    false
+                    top: "0mm",
+                    right: "0mm",
+                    bottom: "0mm",
+                    left: "0mm"
+                }
             });
 
-        /*
-        |--------------------------------------------------------------------------
-        | Validation PDF
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-            !pdfBuffer ||
-            pdfBuffer.length === 0
-        ) {
-
-            throw new Error(
-                "Le PDF généré est vide."
-            );
-        }
 
         console.log(
-            `PDF généré : ${(
-                pdfBuffer.length /
-                1024 /
-                1024
-            ).toFixed(2)} MB`
+            `PDF généré : ${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB`
         );
 
+
         return pdfBuffer;
+
+    } catch (error) {
+
+        console.error(
+            "Erreur conversion HTML → PDF :"
+        );
+
+        console.error(error);
+
+
+        throw error;
 
     } finally {
 
         /*
-        |--------------------------------------------------------------------------
-        | Fermeture page
-        |--------------------------------------------------------------------------
-        */
+         * Fermeture de la page.
+         *
+         * Le navigateur reste ouvert pour pouvoir être
+         * réutilisé lors des requêtes suivantes.
+         */
+        if (page) {
 
-        try {
+            try {
 
-            await page.close();
+                await page.close();
 
-        } catch (error) {
+            } catch (error) {
 
-            console.warn(
-                "Erreur fermeture page :",
-                error.message
-            );
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Fermeture context
-        |--------------------------------------------------------------------------
-        */
-
-        try {
-
-            await context.close();
-
-        } catch (error) {
-
-            console.warn(
-                "Erreur fermeture context :",
-                error.message
-            );
+                console.warn(
+                    "Impossible de fermer la page :",
+                    error.message
+                );
+            }
         }
     }
 }
 
-/*
-|--------------------------------------------------------------------------
-| Fermeture navigateur
-|--------------------------------------------------------------------------
-*/
+
+// ============================================================================
+// FERMETURE DU NAVIGATEUR
+// ============================================================================
 
 async function closeBrowser() {
 
-    if (
-        browser
-    ) {
+    if (!browser) {
+        return;
+    }
+
+
+    try {
 
         console.log(
             "Fermeture de Chromium..."
         );
 
-        try {
 
-            await browser.close();
+        await browser.close();
 
-        } catch (error) {
 
-            console.warn(
-                "Erreur fermeture Chromium :",
-                error.message
-            );
-        }
+    } catch (error) {
+
+        console.warn(
+            "Erreur fermeture Chromium :",
+            error.message
+        );
+
+
+    } finally {
 
         browser = null;
     }
 }
 
-/*
-|--------------------------------------------------------------------------
-| Export
-|--------------------------------------------------------------------------
-*/
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
 
 module.exports = {
+
     htmlFileToPdf,
+
     closeBrowser
 };
