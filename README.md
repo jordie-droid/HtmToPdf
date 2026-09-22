@@ -2,19 +2,20 @@
 
 HtmlToPdf is a web application built with **Node.js**, **Express.js**, and **Playwright** that enables the generation of high-quality PDF documents from HTML content.
 
-The application leverages the power of **Chromium** through Playwright to accurately render HTML and CSS before converting it into a PDF. This ensures that the generated document closely matches the appearance of a modern web browser.
+The application leverages the power of **Chromium** through Playwright to accurately render HTML and CSS before converting it into PDF format. This ensures that the generated documents closely match the appearance of modern web browsers.
 
 ## 🚀 Features
 
-- Convert HTML content to PDF documents.
+- Convert HTML content into PDF documents.
 - Full support for HTML5 and CSS3.
 - Multi-page PDF generation.
 - Custom header and footer support.
 - Local and remote image rendering.
 - Custom font support.
-- REST API for easy integration.
+- Simple and lightweight REST API.
 - High-fidelity rendering powered by Chromium.
-- Ideal for business documents and automated reporting.
+- Optimized for business documents and automated reporting.
+- Fast and reliable PDF generation.
 
 ## 🛠️ Technologies
 
@@ -40,9 +41,9 @@ The application leverages the power of **Chromium** through Playwright to accura
 1. The client sends HTML content through an HTTP request.
 2. The Express server receives and processes the request.
 3. Playwright launches a headless Chromium browser.
-4. The HTML is rendered exactly as it would be in a browser.
+4. The HTML is rendered exactly as it would appear in a web browser.
 5. Chromium generates a PDF from the rendered page.
-6. The PDF is returned to the client or saved on the server.
+6. The generated PDF is returned to the client or saved on the server.
 
 ## 🎯 Project Goal
 
@@ -58,11 +59,13 @@ npm install
 
 ## ▶️ Getting Started
 
+Run the application:
+
 ```bash
 npm start
 ```
 
-Or run in development mode:
+Or start it in development mode:
 
 ```bash
 npm run dev
@@ -70,14 +73,54 @@ npm run dev
 
 ## 📄 API Example
 
+### Request
+
 ```http
 POST /api/pdf
-Content-Type: application/json
-
-{
-  "html": "<h1>Hello World</h1>"
-}
+Content-Type: text/html
 ```
+
+### Request Body
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Sample PDF</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 40px;
+        }
+
+        h1 {
+            color: #2c3e50;
+        }
+    </style>
+</head>
+<body>
+    <h1>Hello World</h1>
+    <p>
+        This PDF document was generated from HTML using HtmlToPdf.
+    </p>
+</body>
+</html>
+```
+### Response
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="document.pdf"
+Content-Length: 58231
+Cache-Control: no-store
+X-Request-Id: 7c1f8e2a-4c32-4e91-91e7-5c9f2b8d14a7
+Date: Tue, 22 Sep 2026 10:20:15 GMT
+Connection: keep-alive
+```
+
+The generated PDF file is returned directly in the response.
 
 ## 🔒 Benefits
 
@@ -86,6 +129,30 @@ Content-Type: application/json
 - Easy integration with existing applications
 - Suitable for cloud and on-premises deployments
 - Lightweight and scalable architecture
+- Consistent output across environments
+
+## 🌟 Why Playwright?
+
+Playwright uses the Chromium rendering engine, allowing PDFs to be generated exactly as pages appear in modern browsers. This guarantees high compatibility with advanced HTML and CSS features, including:
+
+- Flexbox
+- CSS Grid
+- Custom Fonts
+- SVG Graphics
+- Media Queries
+- Page Break Controls
+- Complex Layouts
+
+## 🤝 Contributing
+
+Contributions are welcome.
+
+If you would like to contribute:
+
+1. Fork the repository.
+2. Create a feature branch.
+3. Commit your changes.
+4. Submit a pull request.
 
 ## 📜 License
 
@@ -95,4 +162,4 @@ This project is released under the MIT License.
 
 **Jordie LUTUNDULA**
 
-A Node.js, Express, and Playwright-based PDF generation service designed to transform dynamic HTML content into professional, print-ready PDF documents with high accuracy and performance.
+HtmlToPdf is a Node.js, Express, and Playwright-based PDF generation service designed to transform dynamic HTML content into professional, print-ready PDF documents with high accuracy, reliability, and performance.
