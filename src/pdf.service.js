@@ -2,9 +2,6 @@ const {
     chromium: playwright
 } = require("playwright-core");
 
-const sparticuzChromium =
-    require("@sparticuz/chromium");
-
 const {
     pathToFileURL
 } = require("url");
@@ -24,28 +21,7 @@ const PAGE_TIMEOUT =
 
 /*
 |--------------------------------------------------------------------------
-| Détection de l'environnement
-|--------------------------------------------------------------------------
-|
-| Vercel fonctionne sous Linux.
-| En développement sur ton PC Windows, on utilise Chromium installé
-| par Playwright.
-|
-|--------------------------------------------------------------------------
-*/
-
-const IS_WINDOWS =
-    process.platform === "win32";
-
-const IS_VERCEL =
-    Boolean(process.env.VERCEL);
-
-const IS_LOCAL =
-    IS_WINDOWS && !IS_VERCEL;
-
-/*
-|--------------------------------------------------------------------------
-| Browser singleton
+| Browser
 |--------------------------------------------------------------------------
 */
 
@@ -53,133 +29,167 @@ let browser = null;
 
 /*
 |--------------------------------------------------------------------------
-| Recherche du Chromium local
+| Chromium Sparticuz
+|--------------------------------------------------------------------------
+*/
+
+let sparticuzChromium = null;
+
+/*
+|--------------------------------------------------------------------------
+| Détection environnement
+|--------------------------------------------------------------------------
+*/
+
+const IS_VERCEL =
+    Boolean(process.env.VERCEL);
+
+const IS_WINDOWS =
+    process.platform === "win32";
+
+const IS_LOCAL =
+    !IS_VERCEL && IS_WINDOWS;
+
+/*
+|--------------------------------------------------------------------------
+| Chargement dynamique de @sparticuz/chromium
+|--------------------------------------------------------------------------
+|
+| IMPORTANT :
+| @sparticuz/chromium est ESM.
+|
+| Notre projet reste en CommonJS.
+|
+| On utilise donc import() au lieu de require().
+|
+|--------------------------------------------------------------------------
+*/
+
+async function getSparticuzChromium() {
+
+    if (
+        sparticuzChromium
+    ) {
+        return sparticuzChromium;
+    }
+
+    console.log(
+        "Chargement de @sparticuz/chromium..."
+    );
+
+    const module =
+        await import("@sparticuz/chromium");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Selon la version du package, l'export peut être default
+    | ou directement exposé.
+    |--------------------------------------------------------------------------
+    */
+
+    sparticuzChromium =
+        module.default || module;
+
+    console.log(
+        "@sparticuz/chromium chargé."
+    );
+
+    return sparticuzChromium;
+}
+
+/*
+|--------------------------------------------------------------------------
+| Recherche Chromium local Windows
 |--------------------------------------------------------------------------
 */
 
 function findLocalChromium() {
 
+    const possibleRoots = [];
+
     /*
     |--------------------------------------------------------------------------
-    | PLAYWRIGHT_BROWSERS_PATH personnalisé
+    | LOCALAPPDATA
     |--------------------------------------------------------------------------
     */
 
     if (
-        process.env.PLAYWRIGHT_BROWSERS_PATH &&
-        process.env.PLAYWRIGHT_BROWSERS_PATH !== "0"
+        process.env.LOCALAPPDATA
     ) {
 
-        console.log(
-            "PLAYWRIGHT_BROWSERS_PATH détecté :",
-            process.env.PLAYWRIGHT_BROWSERS_PATH
+        possibleRoots.push(
+            path.join(
+                process.env.LOCALAPPDATA,
+                "ms-playwright"
+            )
         );
     }
 
     /*
     |--------------------------------------------------------------------------
-    | Chromium installé par Playwright
-    |--------------------------------------------------------------------------
-    |
-    | On demande directement à Playwright de trouver son exécutable.
-    |
+    | USERPROFILE
     |--------------------------------------------------------------------------
     */
 
-    try {
+    if (
+        process.env.USERPROFILE
+    ) {
 
-        /*
-        | playwright-core expose les chemins de navigateur via
-        | PLAYWRIGHT_BROWSERS_PATH/cache selon l'installation.
-        |
-        | On tente d'abord les chemins connus.
-        */
-
-        const localAppData =
-            process.env.LOCALAPPDATA;
-
-        if (localAppData) {
-
-            const playwrightRoot =
-                path.join(
-                    localAppData,
-                    "ms-playwright"
-                );
-
-            if (
-                fs.existsSync(
-                    playwrightRoot
-                )
-            ) {
-
-                const chromiumExecutable =
-                    findChromiumExecutable(
-                        playwrightRoot
-                    );
-
-                if (
-                    chromiumExecutable
-                ) {
-
-                    return chromiumExecutable;
-                }
-            }
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Fallback : cache utilisateur
-        |--------------------------------------------------------------------------
-        */
-
-        const userProfile =
-            os.homedir();
-
-        const possibleRoots = [
-
+        possibleRoots.push(
             path.join(
-                userProfile,
+                process.env.USERPROFILE,
                 "AppData",
                 "Local",
                 "ms-playwright"
-            ),
-
-            path.join(
-                userProfile,
-                ".cache",
-                "ms-playwright"
             )
-        ];
+        );
+    }
 
-        for (
-            const root of possibleRoots
+    /*
+    |--------------------------------------------------------------------------
+    | HOME
+    |--------------------------------------------------------------------------
+    */
+
+    const home =
+        os.homedir();
+
+    possibleRoots.push(
+        path.join(
+            home,
+            "AppData",
+            "Local",
+            "ms-playwright"
+        )
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Recherche
+    |--------------------------------------------------------------------------
+    */
+
+    for (
+        const root of possibleRoots
+    ) {
+
+        if (
+            !fs.existsSync(root)
         ) {
-
-            if (
-                !fs.existsSync(root)
-            ) {
-                continue;
-            }
-
-            const executable =
-                findChromiumExecutable(
-                    root
-                );
-
-            if (
-                executable
-            ) {
-
-                return executable;
-            }
+            continue;
         }
 
-    } catch (error) {
+        const executable =
+            findChromiumExecutable(
+                root
+            );
 
-        console.warn(
-            "Impossible de rechercher Chromium local :",
-            error.message
-        );
+        if (
+            executable
+        ) {
+
+            return executable;
+        }
     }
 
     return null;
@@ -187,7 +197,7 @@ function findLocalChromium() {
 
 /*
 |--------------------------------------------------------------------------
-| Recherche récursive de l'exécutable Chromium
+| Recherche récursive chrome.exe / chrome
 |--------------------------------------------------------------------------
 */
 
@@ -219,16 +229,16 @@ function findChromiumExecutable(
                 entry.isDirectory()
             ) {
 
-                const executable =
+                const result =
                     findChromiumExecutable(
                         fullPath
                     );
 
                 if (
-                    executable
+                    result
                 ) {
 
-                    return executable;
+                    return result;
                 }
 
             } else {
@@ -276,11 +286,6 @@ function findChromiumExecutable(
 
     } catch (error) {
 
-        /*
-        | Certains dossiers peuvent ne pas être accessibles.
-        | On ignore simplement et on poursuit la recherche.
-        */
-
         return null;
     }
 
@@ -289,7 +294,7 @@ function findChromiumExecutable(
 
 /*
 |--------------------------------------------------------------------------
-| Démarrage du navigateur
+| Démarrage Chromium
 |--------------------------------------------------------------------------
 */
 
@@ -297,17 +302,15 @@ async function getBrowser() {
 
     /*
     |--------------------------------------------------------------------------
-    | Réutilisation du navigateur
+    | Réutiliser le navigateur
     |--------------------------------------------------------------------------
     */
 
-    if (browser) {
+    if (
+        browser
+    ) {
 
         try {
-
-            /*
-            | Vérifie que le navigateur répond encore.
-            */
 
             if (
                 browser.isConnected()
@@ -332,7 +335,9 @@ async function getBrowser() {
     |--------------------------------------------------------------------------
     */
 
-    if (IS_LOCAL) {
+    if (
+        IS_LOCAL
+    ) {
 
         console.log(
             "========================================"
@@ -343,7 +348,7 @@ async function getBrowser() {
         );
 
         console.log(
-            "Recherche de Chromium Playwright..."
+            "Recherche de Chromium..."
         );
 
         const executablePath =
@@ -357,10 +362,8 @@ async function getBrowser() {
                 [
                     "Chromium local introuvable.",
                     "",
-                    "Exécute cette commande :",
-                    "npx playwright-core install chromium",
-                    "",
-                    "Puis relance le serveur."
+                    "Exécute :",
+                    "npx playwright-core install chromium"
                 ].join("\n")
             );
         }
@@ -380,11 +383,6 @@ async function getBrowser() {
 
                 executablePath,
 
-                /*
-                | En local, on n'a pas besoin des arguments
-                | spécifiques à AWS/Vercel.
-                */
-
                 args: [
                     "--no-sandbox",
                     "--disable-setuid-sandbox"
@@ -400,7 +398,7 @@ async function getBrowser() {
 
     /*
     |--------------------------------------------------------------------------
-    | VERCEL / LINUX SERVERLESS
+    | VERCEL / LINUX
     |--------------------------------------------------------------------------
     */
 
@@ -412,23 +410,24 @@ async function getBrowser() {
         "Environnement : VERCEL / SERVERLESS"
     );
 
-    console.log(
-        "Préparation de Chromium serverless..."
-    );
+    /*
+    |--------------------------------------------------------------------------
+    | Chargement Sparticuz
+    |--------------------------------------------------------------------------
+    */
+
+    const chromium =
+        await getSparticuzChromium();
 
     /*
     |--------------------------------------------------------------------------
-    | Désactivation du mode graphique
-    |--------------------------------------------------------------------------
-    |
-    | Pour une génération PDF headless, cela réduit les besoins graphiques.
-    |
+    | Mode graphique
     |--------------------------------------------------------------------------
     */
 
     try {
 
-        sparticuzChromium.setGraphicsMode =
+        chromium.setGraphicsMode =
             false;
 
     } catch (error) {
@@ -441,12 +440,16 @@ async function getBrowser() {
 
     /*
     |--------------------------------------------------------------------------
-    | Récupération du chemin Chromium
+    | Chemin Chromium
     |--------------------------------------------------------------------------
     */
 
+    console.log(
+        "Récupération du chemin Chromium..."
+    );
+
     const executablePath =
-        await sparticuzChromium.executablePath();
+        await chromium.executablePath();
 
     console.log(
         `Chromium serverless : ${executablePath}`
@@ -454,12 +457,7 @@ async function getBrowser() {
 
     /*
     |--------------------------------------------------------------------------
-    | Création d'un profil temporaire unique
-    |--------------------------------------------------------------------------
-    |
-    | Utile pour éviter que plusieurs invocations utilisent le même
-    | dossier utilisateur dans /tmp.
-    |
+    | Dossier temporaire Chromium
     |--------------------------------------------------------------------------
     */
 
@@ -478,13 +476,9 @@ async function getBrowser() {
         }
     );
 
-    console.log(
-        `User data dir : ${userDataDir}`
-    );
-
     /*
     |--------------------------------------------------------------------------
-    | Démarrage Chromium
+    | Démarrage
     |--------------------------------------------------------------------------
     */
 
@@ -498,7 +492,7 @@ async function getBrowser() {
             executablePath,
 
             args: [
-                ...sparticuzChromium.args,
+                ...chromium.args,
 
                 `--user-data-dir=${userDataDir}`
             ],
@@ -506,9 +500,13 @@ async function getBrowser() {
             headless: true
         });
 
+    console.log(
+        "Chromium serverless démarré."
+    );
+
     /*
     |--------------------------------------------------------------------------
-    | Nettoyage du userDataDir à la fermeture
+    | Nettoyage
     |--------------------------------------------------------------------------
     */
 
@@ -526,22 +524,14 @@ async function getBrowser() {
                     }
                 );
 
-                console.log(
-                    "User data Chromium supprimé."
-                );
-
             } catch (error) {
 
                 console.warn(
-                    "Impossible de supprimer userDataDir :",
+                    "Impossible de supprimer le profil Chromium :",
                     error.message
                 );
             }
         }
-    );
-
-    console.log(
-        "Chromium serverless démarré."
     );
 
     return browser;
@@ -549,7 +539,7 @@ async function getBrowser() {
 
 /*
 |--------------------------------------------------------------------------
-| Conversion HTML → PDF
+| HTML → PDF
 |--------------------------------------------------------------------------
 */
 
@@ -559,7 +549,7 @@ async function htmlFileToPdf(
 
     /*
     |--------------------------------------------------------------------------
-    | Vérification du fichier HTML
+    | Vérification fichier
     |--------------------------------------------------------------------------
     */
 
@@ -594,7 +584,7 @@ async function htmlFileToPdf(
 
     /*
     |--------------------------------------------------------------------------
-    | Browser context
+    | Context
     |--------------------------------------------------------------------------
     */
 
@@ -606,16 +596,12 @@ async function htmlFileToPdf(
                 height: 720
             },
 
-            /*
-            | Autorise les ressources locales.
-            */
-
             javaScriptEnabled: true
         });
 
     /*
     |--------------------------------------------------------------------------
-    | Nouvelle page
+    | Page
     |--------------------------------------------------------------------------
     */
 
@@ -640,17 +626,7 @@ async function htmlFileToPdf(
 
         /*
         |--------------------------------------------------------------------------
-        | URL file:// correcte
-        |--------------------------------------------------------------------------
-        |
-        | pathToFileURL() gère correctement :
-        |
-        | C:\...
-        | espaces
-        | caractères spéciaux
-        | Windows
-        | Linux
-        |
+        | URL du fichier
         |--------------------------------------------------------------------------
         */
 
@@ -665,7 +641,7 @@ async function htmlFileToPdf(
 
         /*
         |--------------------------------------------------------------------------
-        | Chargement HTML
+        | Chargement
         |--------------------------------------------------------------------------
         */
 
@@ -679,7 +655,7 @@ async function htmlFileToPdf(
 
         /*
         |--------------------------------------------------------------------------
-        | Attente des polices
+        | Fonts
         |--------------------------------------------------------------------------
         */
 
@@ -697,7 +673,7 @@ async function htmlFileToPdf(
 
         /*
         |--------------------------------------------------------------------------
-        | Attente des images
+        | Images
         |--------------------------------------------------------------------------
         */
 
@@ -710,7 +686,6 @@ async function htmlFileToPdf(
                     );
 
                 await Promise.all(
-
                     images.map(
                         img => {
 
@@ -739,7 +714,7 @@ async function htmlFileToPdf(
 
         /*
         |--------------------------------------------------------------------------
-        | Petite stabilisation du DOM
+        | Stabilisation
         |--------------------------------------------------------------------------
         */
 
@@ -749,7 +724,7 @@ async function htmlFileToPdf(
 
         /*
         |--------------------------------------------------------------------------
-        | Informations de diagnostic
+        | Diagnostic
         |--------------------------------------------------------------------------
         */
 
@@ -785,7 +760,7 @@ async function htmlFileToPdf(
 
         /*
         |--------------------------------------------------------------------------
-        | Génération PDF
+        | PDF
         |--------------------------------------------------------------------------
         */
 
@@ -831,7 +806,7 @@ async function htmlFileToPdf(
 
         /*
         |--------------------------------------------------------------------------
-        | Vérification du PDF
+        | Validation PDF
         |--------------------------------------------------------------------------
         */
 
@@ -841,7 +816,7 @@ async function htmlFileToPdf(
         ) {
 
             throw new Error(
-                "Playwright a généré un PDF vide."
+                "Le PDF généré est vide."
             );
         }
 
@@ -853,19 +828,13 @@ async function htmlFileToPdf(
             ).toFixed(2)} MB`
         );
 
-        /*
-        |--------------------------------------------------------------------------
-        | Retour Buffer
-        |--------------------------------------------------------------------------
-        */
-
         return pdfBuffer;
 
     } finally {
 
         /*
         |--------------------------------------------------------------------------
-        | Fermeture page/context
+        | Fermeture page
         |--------------------------------------------------------------------------
         */
 
@@ -880,6 +849,12 @@ async function htmlFileToPdf(
                 error.message
             );
         }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Fermeture context
+        |--------------------------------------------------------------------------
+        */
 
         try {
 
@@ -897,7 +872,7 @@ async function htmlFileToPdf(
 
 /*
 |--------------------------------------------------------------------------
-| Fermeture Chromium
+| Fermeture navigateur
 |--------------------------------------------------------------------------
 */
 
@@ -924,10 +899,6 @@ async function closeBrowser() {
         }
 
         browser = null;
-
-        console.log(
-            "Chromium fermé."
-        );
     }
 }
 
@@ -938,8 +909,6 @@ async function closeBrowser() {
 */
 
 module.exports = {
-
     htmlFileToPdf,
-
     closeBrowser
 };
