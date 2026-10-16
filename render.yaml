@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: htmtopdf
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PAGE_TIMEOUT
+        value: 120000
