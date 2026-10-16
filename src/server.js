@@ -745,6 +745,9 @@ const app = express();
 const PORT =
     Number(process.env.PORT) || 3000;
 
+const HOST =
+    process.env.HOST || "0.0.0.0";
+
 
 const BASE_URL =
     process.env.BASE_URL ||
@@ -1313,6 +1316,8 @@ const server =
     app.listen(
 
         PORT,
+
+        HOST,
 
         () => {
 
